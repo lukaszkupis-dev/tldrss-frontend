@@ -1,15 +1,18 @@
-const CACHE = 'tldrss-v1';
-const SHELL = ['/', '/manifest.json'];
-
-self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)));
-  self.skipWaiting();
-});
-self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));
-  self.clients.claim();
-});
-self.addEventListener('fetch', e => {
-  if(e.request.url.includes('/api/')) return; // always live
-  e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));
-});
+{
+  "name": "TL;DRSS – Newsy bez ściemy",
+  "short_name": "TL;DRSS",
+  "description": "Czytnik RSS z AI TL;DR – streszcza artykuły zanim klikniesz",
+  "start_url": "/tldrss-frontend/",
+  "scope": "/tldrss-frontend/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F0F4F8",
+  "theme_color": "#F0F4F8",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
+    { "src": "./icons/icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "./icons/icon-167.png", "sizes": "167x167", "type": "image/png" },
+    { "src": "./icons/icon-152.png", "sizes": "152x152", "type": "image/png" }
+  ]
+}
