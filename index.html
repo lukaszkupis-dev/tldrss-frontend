@@ -83,6 +83,10 @@ html,body{width:100%;height:100%;background:var(--bg);color:var(--text);font-fam
 .btn-open:active{background:var(--border)}
 .btn-save{width:38px;height:38px;flex-shrink:0;background:var(--surface2);border:1.5px solid var(--border);border-radius:10px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:15px;transition:background .15s}
 .btn-save.saved{background:var(--accent-bg);border-color:var(--accent)}
+.btn-read{width:38px;height:38px;flex-shrink:0;background:var(--surface2);border:1.5px solid var(--border);border-radius:10px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:15px;transition:background .15s;color:var(--text3)}
+.btn-read.read{background:var(--surface2);border-color:var(--text3);color:var(--text3)}
+.card-read{opacity:.45}
+.card-read .card-title{text-decoration:line-through;text-decoration-color:var(--text3)}
 
 /* Reveal box */
 .reveal-box{margin-top:10px;background:var(--green-bg);border:1.5px solid var(--green);border-radius:12px;padding:12px 14px;animation:popIn .3s cubic-bezier(.34,1.4,.64,1)}
@@ -327,9 +331,9 @@ html[data-theme="grafit"] .pbtn.om{background:#1A2A4A;border-color:#7AB4F8;color
 
 <script>
 // ── Config ──────────────────────────────────────────────────────────
-const API = 'https://tl-drss.onrender.com';  // same origin; change to 'https://your-backend.onrender.com' if separate
+const API = 'https://tl-drss.onrender.com';
 const LS  = { g:k=>localStorage.getItem(k)||'', s:localStorage.setItem.bind(localStorage), d:localStorage.removeItem.bind(localStorage) };
-const K   = { groq:'tl_groq', gem:'tl_gem', prov:'tl_prov', pocket:'tl_pocket', theme:'tl_theme' };
+const K   = { groq:'tl_groq', gem:'tl_gem', prov:'tl_prov', pocket:'tl_pocket', theme:'tl_theme', read:'tl_read', sources:'tl_sources' };
 
 // ── State ────────────────────────────────────────────────────────────
 let articles = [];
@@ -338,6 +342,27 @@ let provider = LS.g(K.prov)  || 'groq';
 let theme    = LS.g(K.theme) || 'arktyk';
 let filter   = 'all';
 let sources  = [];
+
+// Read tracking: { url: timestamp }
+let readMap = JSON.parse(LS.g(K.read) || '{}');
+
+// ── Read helpers ─────────────────────────────────────────────────────
+function cleanOldReads() {
+  const TWO_DAYS = 2 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  let changed = false;
+  for (const url in readMap) {
+    if (now - readMap[url] > TWO_DAYS) { delete readMap[url]; changed = true; }
+  }
+  if (changed) LS.s(K.read, JSON.stringify(readMap));
+}
+
+function markRead(url) {
+  readMap[url] = Date.now();
+  LS.s(K.read, JSON.stringify(readMap));
+}
+
+function isRead(url) { return !!readMap[url]; }
 
 // ── Theme ────────────────────────────────────────────────────────────
 function applyTheme(t) {
@@ -372,14 +397,22 @@ async function loadFeed(force=false) {
   const btn = document.getElementById('refresh-btn');
   btn.style.opacity='.5'; btn.style.pointerEvents='none';
 
+  // Clean old reads
+  cleanOldReads();
+
+  // Get active RSS urls from localStorage
+  const activeSources = sources.filter(s=>s.active).map(s=>s.rss_url);
+
   try {
-    const r = await fetch(API+'/api/feed');
+    const r = await fetch(API+'/api/feed', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ rss_urls: activeSources })
+    });
     const data = await r.json();
     articles = data.articles || [];
     buildPills();
     renderFeed(filter);
-    if(data.errors && data.errors.length)
-      console.warn('RSS errors:', data.errors);
   } catch(e) {
     feedEl.innerHTML = `<div class="empty"><div class="empty-icon">📡</div>Nie można pobrać newsów.<br>Sprawdź połączenie z internetem.</div>`;
   } finally {
@@ -401,7 +434,13 @@ function buildPills() {
 }
 
 function renderFeed(src) {
-  const arts = src==='all' ? articles : articles.filter(a=>a.source===src);
+  let arts = src==='all' ? articles : articles.filter(a=>a.source===src);
+  // Sort: unread first, read last
+  arts = [...arts].sort((a,b) => {
+    const ar = isRead(a.url) ? 1 : 0;
+    const br = isRead(b.url) ? 1 : 0;
+    return ar - br;
+  });
   document.getElementById('feed-count').textContent = arts.length;
   const el = document.getElementById('feed');
   if(!arts.length){ el.innerHTML=`<div class="empty"><div class="empty-icon">📭</div>Brak artykułów.</div>`; return; }
@@ -411,10 +450,14 @@ function renderFeed(src) {
 function cardHTML(a) {
   const saved = pocket.some(p=>p.id===a.id);
   const hasSum = !!a._summary;
-  return `<div class="card" id="c${encodeId(a.id)}">
+  const read = isRead(a.url);
+  return `<div class="card ${read?'card-read':''}" id="c${encodeId(a.id)}">
     <div class="card-top">
       <div class="src-tag"><div class="src-dot"></div><div class="src-name">${a.source}</div></div>
-      <div class="card-time">${a.time||''}</div>
+      <div style="display:flex;align-items:center;gap:6px">
+        ${read?'<span style="font-size:.65rem;color:var(--text3);font-family:\'DM Mono\',monospace">przeczytane</span>':''}
+        <div class="card-time">${a.time||''}</div>
+      </div>
     </div>
     <div class="card-title">${a.title}</div>
     ${hasSum?`<div class="reveal-box"><div class="reveal-label">📋 TL;DR</div><div class="reveal-text">${a._summary}</div></div>`:''}
@@ -422,6 +465,7 @@ function cardHTML(a) {
       <button class="btn-reveal" onclick="reveal('${encodeId(a.id)}',event)">${hasSum?'↻ Odśwież':'🔬 TL;DR'}</button>
       <button class="btn-open"   onclick="openArt('${encodeId(a.id)}',event)">Otwórz</button>
       <div class="btn-save ${saved?'saved':''}" onclick="toggleSave('${encodeId(a.id)}',event)">${saved?'🗂':'📎'}</div>
+      <div class="btn-read ${read?'read':''}" onclick="toggleRead('${encodeId(a.id)}',event)" title="${read?'Oznacz jako nieprzeczytane':'Oznacz jako przeczytane'}">${read?'👁':'○'}</div>
     </div>
   </div>`;
 }
@@ -468,10 +512,20 @@ function rerenderCard(eid) {
   el.replaceWith(tmp.firstElementChild);
 }
 
+function toggleRead(eid, e) {
+  e&&e.stopPropagation();
+  const a = getArticle(eid); if(!a) return;
+  if(isRead(a.url)) { delete readMap[a.url]; LS.s(K.read, JSON.stringify(readMap)); }
+  else { markRead(a.url); }
+  renderFeed(filter);
+}
+
 function openArt(eid, e) {
   e&&e.stopPropagation();
   const a = getArticle(eid); if(!a) return;
+  markRead(a.url);
   window.open(a.url, '_blank');
+  rerenderCard(eid);
 }
 
 function toggleSave(eid, e) {
@@ -534,44 +588,69 @@ function updateBadge() {
 }
 
 // ── Sources ─────────────────────────────────────────────────────────
+// Sources are stored in localStorage as primary source of truth.
+// Backend is synced on add/delete but localStorage wins on load.
+
+const DEFAULT_SOURCES = [
+  {id:1, name:'Onet',    url:'https://onet.pl',    rss_url:'https://wiadomosci.onet.pl/.feed',              active:true},
+  {id:2, name:'WP',      url:'https://wp.pl',      rss_url:'https://wiadomosci.wp.pl/rss.xml',              active:true},
+  {id:3, name:'Gazeta',  url:'https://gazeta.pl',  rss_url:'https://rss.gazeta.pl/pub/rss/wiadomosci.xml',  active:true},
+  {id:4, name:'Pudelek', url:'https://pudelek.pl', rss_url:'https://www.pudelek.pl/feed/',                  active:true},
+];
+
+function loadSourcesFromStorage() {
+  const saved = LS.g(K.sources);
+  sources = saved ? JSON.parse(saved) : DEFAULT_SOURCES;
+  renderSheetSources();
+}
+
+function saveSourcesStorage() {
+  LS.s(K.sources, JSON.stringify(sources));
+}
+
 async function loadSources() {
+  loadSourcesFromStorage();
+  // Try to sync from backend but don't overwrite localStorage
   try {
     const r = await fetch(API+'/api/sources');
     const d = await r.json();
-    sources = d.sources || [];
-    renderSheetSources();
-  } catch(e) { console.warn('sources load failed', e); }
+    if(d.sources && d.sources.length > 0 && !LS.g(K.sources)) {
+      sources = d.sources;
+      saveSourcesStorage();
+      renderSheetSources();
+    }
+  } catch(e) { /* offline – use localStorage */ }
 }
 
 function renderSheetSources() {
   const el = document.getElementById('sht-src-list');
   if(!sources.length){ el.innerHTML=`<div style="font-size:.82rem;color:var(--text3);margin-bottom:8px">Brak źródeł – dodaj poniżej.</div>`; return; }
-  el.innerHTML = sources.map(s=>`
+  el.innerHTML = sources.map((s,i)=>`
   <div class="src-row">
     <div style="flex:1;min-width:0">
       <div class="srn">${s.name}</div>
       <div class="sru">${s.rss_url}</div>
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
-      <div class="tog ${s.active?'':'off'}" onclick="toggleSource(${s.id},${s.active})"><div class="tok"></div></div>
-      <div onclick="deleteSource(${s.id})" style="color:var(--text3);cursor:pointer;font-size:16px;padding:4px">✕</div>
+      <div class="tog ${s.active?'':'off'}" onclick="toggleSourceLocal(${i})"><div class="tok"></div></div>
+      <div onclick="deleteSourceLocal(${i})" style="color:var(--text3);cursor:pointer;font-size:16px;padding:4px">✕</div>
     </div>
   </div>`).join('');
 }
 
-async function toggleSource(id, currently_active) {
-  try {
-    await fetch(API+'/api/sources/'+id, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({active: !currently_active}) });
-    await loadSources();
-  } catch(e){ toast('Błąd połączenia'); }
+function toggleSourceLocal(i) {
+  sources[i].active = !sources[i].active;
+  saveSourcesStorage();
+  renderSheetSources();
+  toast(sources[i].active ? 'Źródło włączone' : 'Źródło wyłączone');
 }
 
-async function deleteSource(id) {
-  try {
-    await fetch(API+'/api/sources/'+id, { method:'DELETE' });
-    await loadSources();
-    toast('Usunięto źródło');
-  } catch(e){ toast('Błąd połączenia'); }
+function deleteSourceLocal(i) {
+  const name = sources[i].name;
+  sources.splice(i, 1);
+  saveSourcesStorage();
+  renderSheetSources();
+  toast(`Usunięto: ${name}`);
 }
 
 async function addSource() {
@@ -584,8 +663,11 @@ async function addSource() {
     if(r.status===409){ toast('To źródło już jest na liście'); return; }
     if(!r.ok){ const d=await r.json(); toast(d.detail||'Nie znalazłem RSS'); return; }
     const d = await r.json();
+    // Add to localStorage
+    sources.push({ id: d.id, name: d.name, url: v, rss_url: d.rss_url, active: true });
+    saveSourcesStorage();
     document.getElementById('new-src').value='';
-    await loadSources();
+    renderSheetSources();
     toast(`Dodano: ${d.name} ✓`);
   } catch(e){ toast('Błąd połączenia z backendem'); }
   finally{ btn.textContent='Znajdź i dodaj'; btn.disabled=false; }
@@ -634,7 +716,9 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catc
 // ── Init ─────────────────────────────────────────────────────────────
 applyTheme(theme);
 updateBadge();
-loadFeed();
+loadSourcesFromStorage();  // load sources from localStorage first
+loadFeed();                // then fetch feed using those sources
+loadSources();             // async sync with backend in background
 </script>
 </body>
 </html>
